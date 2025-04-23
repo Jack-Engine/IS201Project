@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Platformer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column; /* Stack elements vertically */
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #222; /* Dark background */
+            font-family: 'Press Start 2P', cursive; /* Game font */
+            color: #fff; /* White text */
+            overflow: hidden; /* Prevent scrollbars from canvas */
+        }
+
+        #gameCanvas {
+            background-color: #87CEEB; /* Sky blue background */
+            display: block; /* Remove extra space below canvas */
+            border: 5px solid #333; /* Dark border */
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.5);
+            max-width: 100%; /* Ensure canvas fits within viewport width */
+            /* Height will be set by JS based on aspect ratio */
+        }
+
+        #uiContainer {
+            width: 100%;
+            max-width: 800px; /* Match canvas max-width for alignment */
+            padding: 10px 0;
+            display: flex;
+            justify-content: space-between; /* Space out UI elements */
+            align-items: center;
+            box-sizing: border-box; /* Include padding in width */
+        }
+
+        #livesDisplay, #messageDisplay {
+            font-size: 16px; /* Adjust font size */
+            text-shadow: 2px 2px #000; /* Text shadow for readability */
+        }
+
+         #messageDisplay {
+            text-align: center;
+            font-size: 20px;
+            color: #FFD700; /* Gold color for messages */
+            position: absolute; /* Position over the canvas */
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.7); /* Semi-transparent background */
+            padding: 20px;
+            border-radius: 10px;
+            display: none; /* Hidden by default */
+            z-index: 10; /* Ensure it's above the canvas */
+         }
+    </style>
+</head>
+<body>
+    <div id="uiContainer">
+        <div id="livesDisplay">Lives: 3</div>
+        <div>Goal: Reach the Green Flag!</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="messageDisplay"></div>
+
+    <script>
+        // --- Canvas Setup ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const livesDisplay = document.getElementById('livesDisplay');
+        const messageDisplay = document.getElementById('messageDisplay');
+
+        // Game world properties
+        const worldWidth = 2000; // Wider than canvas for scrolling
+        const worldHeight = 600;
+
+        // Set initial canvas dimensions (can be adjusted)
+        let canvasWidth = Math.min(800, window.innerWidth - 40); // Limit width, consider padding
+        let canvasHeight = worldHeight; // Use fixed height initially
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+
+        // Camera/Viewport
+        const camera = {
+            x: 0,
+            y: 0,
+            width: canvas.width,
+            height: canvas.height,
+            // Function to update camera position to follow player
+            update: function(player) {
+                // Follow player horizontally, keeping player roughly centered
+                let targetX = player.x + player.width / 2 - this.width / 2;
+
+                // Clamp camera position to world boundaries
+                this.x = Math.max(0, Math.min(targetX, worldWidth - this.width));
+                // Vertical camera remains fixed for this simple game
+                this.y = 0;
+            }
+        };
+
+        // --- Game Variables ---
+        const gravity = 0.5;
+        const jumpForce = -12;
+        const playerSpeed = 5;
+        const enemySpeed = 1.5;
+        let keys = {}; // Object to track pressed keys
+        let player;
+        let platforms = [];
+        let enemies = [];
+        let goal;
+        let isGameOver = false;
+        let initialPlayerLives = 3;
+        let animationFrameId; // To control the game loop
+
+        // --- Game Object Classes ---
+
+        // Player Class
+        class Player {
+            constructor(x, y, width, height, color) {
+                this.x = x;
+                this.y = y;
+                this.startX = x; // Initial position for respawn
+                this.startY = y;
+                this.width = width;
+                this.height = height;
+                this.color = color;
+                this.velocityX = 0;
+                this.velocityY = 0;
+                this.isJumping = false;
+                this.isOnPlatform = false;
+                this.lives = initialPlayerLives;
+            }
+
+            draw(cameraX) {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x - cameraX, this.y, this.width, this.height);
+            }
+
+            applyGravity() {
+                this.velocityY += gravity;
+                this.y += this.velocityY;
+            }
+
+            jump() {
+                // Only jump if on a platform and not already jumping upwards
+                if (this.isOnPlatform && this.velocityY >= 0) {
+                    this.velocityY = jumpForce;
+                    this.isJumping = true;
+                    this.isOnPlatform = false; // No longer on platform immediately after jumping
+                }
+            }
+
+            move() {
+                 // Horizontal Movement
+                if (keys['ArrowLeft']) {
+                    this.velocityX = -playerSpeed;
+                } else if (keys['ArrowRight']) {
+                    this.velocityX = playerSpeed;
+                } else {
+                    this.velocityX = 0; // Stop if no arrow key is pressed
+                }
+                this.x += this.velocityX;
+
+                // Prevent moving out of world bounds (left/right)
+                this.x = Math.max(0, Math.min(this.x, worldWidth - this.width));
+            }
+
+            update(platforms) {
+                this.move();
+                this.applyGravity();
+                this.checkPlatformCollisions(platforms);
+                this.checkWorldBounds();
+            }
+
+            checkPlatformCollisions(platforms) {
+                this.isOnPlatform = false; // Assume not on platform until collision detected
+
+                platforms.forEach(platform => {
+                    // Check for collision using AABB (Axis-Aligned Bounding Box)
+                    if (
+                        this.x < platform.x + platform.width &&
+                        this.x + this.width > platform.x &&
+                        this.y < platform.y + platform.height &&
+                        this.y + this.height > platform.y
+                    ) {
+                        // Collision detected, determine side of collision
+
+                        // Check collision from the top (landing)
+                        // Player was above the platform in the previous frame, and velocity is downwards
+                        if (this.velocityY >= 0 && (this.y + this.height - this.velocityY) <= platform.y) {
+                             this.y = platform.y - this.height; // Place player on top
+                             this.velocityY = 0; // Stop vertical movement
+                             this.isJumping = false;
+                             this.isOnPlatform = true; // Player is now on a platform
+                        }
+                        // Check collision from the bottom (hitting head)
+                        else if (this.velocityY < 0 && this.y >= platform.y + platform.height) {
+                             this.y = platform.y + platform.height; // Place player below
+                             this.velocityY = 0; // Stop upward movement
+                        }
+                        // Check horizontal collisions (sides) - prevent sticking
+                        else {
+                             // Collision from the left side of the platform
+                             if (this.velocityX > 0 && (this.x + this.width - this.velocityX) <= platform.x) {
+                                 this.x = platform.x - this.width;
+                                 this.velocityX = 0;
+                             }
+                             // Collision from the right side of the platform
+                             else if (this.velocityX < 0 && this.x >= platform.x + platform.width) {
+                                 this.x = platform.x + platform.width;
+                                 this.velocityX = 0;
+                             }
+                        }
+                    }
+                });
+            }
+
+             checkWorldBounds() {
+                // Check if player fell off the bottom
+                if (this.y + this.height > worldHeight) {
+                    this.loseLife();
+                }
+            }
+
+            checkEnemyCollisions(enemies) {
+                enemies.forEach(enemy => {
+                    if (
+                        this.x < enemy.x + enemy.width &&
+                        this.x + this.width > enemy.x &&
+                        this.y < enemy.y + enemy.height &&
+                        this.y + this.height > enemy.y
+                    ) {
+                        this.loseLife();
+                    }
+                });
+            }
+
+             checkGoalCollision(goal) {
+                 if (
+                     this.x < goal.x + goal.width &&
+                     this.x + this.width > goal.x &&
+                     this.y < goal.y + goal.height &&
+                     this.y + this.height > goal.y
+                 ) {
+                     winGame();
+                 }
+             }
+
+            loseLife() {
+                if (isGameOver) return; // Don't lose life if already game over
+
+                this.lives--;
+                updateLivesDisplay();
+                console.log("Lost a life! Lives remaining:", this.lives); // Debug log
+
+                if (this.lives <= 0) {
+                    gameOver();
+                } else {
+                    this.respawn();
+                }
+            }
+
+            respawn() {
+                // Reset position to start
+                this.x = this.startX;
+                this.y = this.startY;
+                this.velocityX = 0;
+                this.velocityY = 0;
+                this.isJumping = false;
+                camera.x = 0; // Reset camera on respawn
+            }
+        }
+
+        // Platform Class
+        class Platform {
+            constructor(x, y, width, height, color) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.color = color;
+            }
+
+            draw(cameraX) {
+                // Only draw if visible within the camera view
+                if (this.x + this.width > cameraX && this.x < cameraX + camera.width) {
+                    ctx.fillStyle = this.color;
+                    ctx.fillRect(this.x - cameraX, this.y, this.width, this.height);
+                }
+            }
+        }
+
+        // Enemy Class
+        class Enemy {
+            constructor(x, y, width, height, color, patrolRange) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.color = color;
+                this.startX = x; // Starting position of patrol
+                this.endX = x + patrolRange; // Ending position of patrol
+                this.direction = 1; // 1 for right, -1 for left
+            }
+
+            draw(cameraX) {
+                 // Only draw if visible within the camera view
+                if (this.x + this.width > cameraX && this.x < cameraX + camera.width) {
+                    ctx.fillStyle = this.color;
+                    ctx.fillRect(this.x - cameraX, this.y, this.width, this.height);
+                }
+            }
+
+            update() {
+                this.x += enemySpeed * this.direction;
+
+                // Reverse direction if reaching patrol boundaries
+                if (this.x >= this.endX || this.x <= this.startX) {
+                    this.direction *= -1;
+                     // Ensure enemy stays exactly within bounds if overshot
+                    this.x = Math.max(this.startX, Math.min(this.x, this.endX));
+                }
+            }
+        }
+
+        // Goal Class
+        class Goal {
+            constructor(x, y, width, height, color) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.color = color;
+            }
+
+            draw(cameraX) {
+                // Only draw if visible within the camera view
+                if (this.x + this.width > cameraX && this.x < cameraX + camera.width) {
+                    ctx.fillStyle = this.color;
+                    ctx.fillRect(this.x - cameraX, this.y, this.width, this.height);
+                    // Simple flag pole
+                    ctx.fillStyle = '#A0522D'; // Brown pole
+                    ctx.fillRect(this.x - cameraX - 2, this.y - 50, 4, 50);
+                }
+            }
+        }
+
+
+        // --- Input Handling ---
+        window.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            // Prevent default browser behavior for space and arrow keys
+            if ([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                e.preventDefault();
+            }
+
+             // Handle jump separately on keydown for responsiveness
+            if (e.key === ' ' || e.key === 'ArrowUp') { // Use Space or ArrowUp to jump
+                 if (!isGameOver && player) {
+                    player.jump();
+                 }
+            }
+
+            // Handle restart
+            if (isGameOver && (e.key === 'r' || e.key === 'R')) {
+                restartGame();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // --- Game Initialization ---
+        function initGame() {
+            console.log("Initializing game..."); // Debug log
+            isGameOver = false;
+            messageDisplay.style.display = 'none'; // Hide message display
+
+            // Create Player
+            player = new Player(50, worldHeight - 100, 30, 40, '#FF0000'); // Red player
+
+            // Create Platforms (define level layout)
+            platforms = [
+                // Ground floor
+                new Platform(0, worldHeight - 40, 400, 40, '#008000'), // Green platform
+                // Mid-level platforms
+                new Platform(300, worldHeight - 150, 150, 20, '#A0522D'), // Brown platform
+                new Platform(550, worldHeight - 250, 200, 20, '#A0522D'),
+                new Platform(800, worldHeight - 180, 100, 20, '#A0522D'),
+                new Platform(1000, worldHeight - 300, 180, 20, '#A0522D'),
+                new Platform(1250, worldHeight - 220, 150, 20, '#A0522D'),
+                 // Higher platforms
+                new Platform(1450, worldHeight - 350, 100, 20, '#A0522D'),
+                new Platform(1600, worldHeight - 450, 120, 20, '#A0522D'),
+                // Final platform
+                new Platform(1800, worldHeight - 100, 200, 100, '#008000') // Larger end platform
+            ];
+
+            // Create Enemies (place them on specific platforms)
+            enemies = [
+                // Enemy on the first long platform
+                new Enemy(200, worldHeight - 40 - 30, 30, 30, '#FFA500', 150), // Orange enemy, patrols 150px
+                // Enemy on a mid-level platform
+                new Enemy(570, worldHeight - 250 - 30, 30, 30, '#FFA500', 100),
+                // Enemy on another mid-level platform
+                new Enemy(1020, worldHeight - 300 - 30, 30, 30, '#FFA500', 120),
+                 // Enemy near the end
+                new Enemy(1300, worldHeight - 220 - 30, 30, 30, '#FFA500', 80),
+            ];
+
+            // Create Goal
+            goal = new Goal(worldWidth - 80, worldHeight - 100 - 50, 30, 50, '#00FF00'); // Green flag goal
+
+            // Reset camera
+            camera.x = 0;
+
+            // Set initial lives display
+            updateLivesDisplay();
+
+            // Start the game loop if it's not already running
+            if (!animationFrameId) {
+                 console.log("Starting game loop..."); // Debug log
+                gameLoop();
+            }
+        }
+
+        // --- UI Updates ---
+        function updateLivesDisplay() {
+            if (player) {
+                livesDisplay.textContent = `Lives: ${player.lives}`;
+            } else {
+                 livesDisplay.textContent = `Lives: ${initialPlayerLives}`;
+            }
+        }
+
+        function showMessage(msg) {
+            messageDisplay.textContent = msg;
+            messageDisplay.style.display = 'block';
+        }
+
+        // --- Game State Functions ---
+        function gameOver() {
+            console.log("Game Over!"); // Debug log
+            isGameOver = true;
+            showMessage('Game Over! Press R to Restart');
+            // Optionally stop the game loop immediately
+            // cancelAnimationFrame(animationFrameId);
+            // animationFrameId = null; // Clear the ID
+        }
+
+        function winGame() {
+            console.log("You Win!"); // Debug log
+            isGameOver = true; // Treat win like game over to stop updates/input
+            showMessage('You Win! Press R to Play Again');
+            // Optionally stop the game loop immediately
+            // cancelAnimationFrame(animationFrameId);
+            // animationFrameId = null; // Clear the ID
+        }
+
+
+        function restartGame() {
+             console.log("Restarting game..."); // Debug log
+             // Stop the current loop if it's somehow still running
+             if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+             }
+             // Re-initialize game elements
+             initGame();
+        }
+
+        // --- Game Loop ---
+        function gameLoop() {
+            // Clear the canvas relative to the camera
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw background elements if any (e.g., parallax) - none for now
+
+            if (!isGameOver) {
+                // --- Update Section ---
+                player.update(platforms); // Update player physics and platform collisions
+                enemies.forEach(enemy => enemy.update()); // Update enemy movement
+                player.checkEnemyCollisions(enemies); // Check for collisions with enemies AFTER they move
+                player.checkGoalCollision(goal); // Check if player reached the goal
+                camera.update(player); // Update camera based on player position
+            }
+
+            // --- Draw Section (relative to camera) ---
+            platforms.forEach(platform => platform.draw(camera.x));
+            enemies.forEach(enemy => enemy.draw(camera.x));
+            goal.draw(camera.x);
+            player.draw(camera.x); // Draw player last so it's on top
+
+            // Request the next frame
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Resize Handling ---
+         function resizeCanvas() {
+            canvasWidth = Math.min(800, window.innerWidth - 40); // Recalculate width
+            // Keep height fixed for simplicity in this platformer
+            // canvasHeight = worldHeight;
+            canvas.width = canvasWidth;
+            // canvas.height = canvasHeight; // Height is already set
+
+            // Update camera width
+            camera.width = canvas.width;
+            camera.height = canvas.height; // Ensure camera height matches
+
+            // Optional: Redraw immediately after resize if needed,
+            // but game loop will handle it.
+        }
+
+        // Debounce function to limit resize calls
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        const debouncedResize = debounce(resizeCanvas, 100); // Adjust delay as needed
+        window.addEventListener('resize', debouncedResize);
+
+
+        // --- Start Game on Load ---
+        window.onload = () => {
+            console.log("Window loaded, initializing game..."); // Debug log
+            resizeCanvas(); // Set initial size correctly
+            initGame(); // Initialize all game elements and start loop
+        };
+
+    </script>
+</body>
+</html>
+ 

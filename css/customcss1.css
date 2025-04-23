@@ -1,0 +1,55 @@
+/* Custom Header Styling */
+/* Custom Header Styling – All white text */
+.post-heading h1 {
+    font-family: 'Georgia', serif;
+    color: #ffffff; /* White text */
+    font-size: 3rem;
+    letter-spacing: 1px;
+    margin-bottom: 0.5rem;
+}
+
+.post-heading h2 {
+    font-family: 'Lato', sans-serif;
+    color: #ffffff; /* White text */
+    font-size: 1.5rem;
+    font-weight: 300;
+    margin-bottom: 1rem;
+}
+
+.post-heading .meta {
+    font-family: 'Lato', sans-serif;
+    font-size: 0.9rem;
+    color: #ffffff; /* White text */
+    font-style: italic;
+}
+
+/* Div Containers for Content Blocks */
+.div-wrapper {
+    background-color: #fdfdfd;
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    margin-bottom: 2rem;
+    color: #222; /* Default text color */
+    font-family: 'Open Sans', sans-serif;
+}
+
+.div-highlight {
+    background-color: #f7fdf7;
+    border-left: 6px solid #336633; /* Dark green */
+    padding: 1rem 1.5rem;
+    margin: 2rem 0;
+    color: #224422; /* Deep olive green */
+    font-family: 'Open Sans', sans-serif;
+}
+
+.div-quote {
+    background-color: #fdf7f7;
+    border-left: 4px solid #8b0000; /* Dark red */
+    padding: 1rem 1.5rem;
+    font-family: 'Georgia', serif;
+    font-style: italic;
+    color: #660000; /* Deep crimson */
+    margin: 2rem 0;
+}
+
